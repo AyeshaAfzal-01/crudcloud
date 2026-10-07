@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cloud CRUD · Users</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#e9eef5;--ink:#10203a;--mute:#5d6b82;--card:#fff;--line:#cfd8e6;--accent:#1f5eff;--ok:#12805c;--warn:#b26a00;--err:#c0322b}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Bricolage Grotesque",system-ui,sans-serif}
+header{padding:28px clamp(16px,4vw,48px) 8px;display:flex;justify-content:space-between;align-items:end;flex-wrap:wrap;gap:8px}
+h1{margin:0;font-size:clamp(28px,5vw,44px);font-weight:800;letter-spacing:-.02em}
+.sub{color:var(--mute);margin:0}
+#status{font-size:14px;color:var(--mute)}
+main{display:grid;grid-template-columns:minmax(300px,380px) 1fr;gap:20px;padding:16px clamp(16px,4vw,48px) 48px}
+@media(max-width:860px){main{grid-template-columns:1fr}}
+section{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px}
+h2{margin:0 0 12px;font-size:18px;font-weight:600}
+label{display:block;font-size:14px;color:var(--mute);margin:10px 0 4px}
+input,textarea{width:100%;font:inherit;padding:9px 10px;border:1px solid var(--line);border-radius:6px;background:#fbfcfe;color:var(--ink)}
+textarea{resize:vertical;min-height:70px}
+:focus-visible{outline:3px solid #9db8ff;outline-offset:1px}
+button{font:inherit;font-weight:600;border:0;border-radius:6px;padding:9px 14px;cursor:pointer;background:var(--accent);color:#fff}
+button.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+button.danger{background:transparent;color:var(--err);border:1px solid var(--line)}
+button:disabled{opacity:.5;cursor:wait}
+.row{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;align-items:center}
+.pickpic{display:flex;align-items:center;gap:10px}
+.pickpic img,.avatar{width:56px;height:56px;border-radius:50%;object-fit:cover;background:#dfe6f1;flex:none}
+.avatar{display:grid;place-items:center;font-weight:800;color:var(--mute);font-size:20px}
+.right{display:flex;flex-direction:column;gap:20px;min-width:0}
+.agent-box{border-color:var(--accent);border-width:2px}
+.agent-box textarea{min-height:64px}
+#reply{margin-top:12px;padding:10px 12px;border-radius:6px;background:#f2f6fc;font-size:15px;display:none}
+#reply .tag{font-weight:600;margin-right:6px}
+#reply.ok .tag{color:var(--ok)}#reply.needs_more_info .tag{color:var(--warn)}#reply.error .tag{color:var(--err)}
+.hint{font-size:13px;color:var(--mute);margin:6px 0 0}
+ul{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+li{display:flex;gap:12px;align-items:center;border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+li .info{flex:1;min-width:0}
+li b{display:block}li small{color:var(--mute);display:block;overflow:hidden;text-overflow:ellipsis}
+.empty{color:var(--mute);padding:8px 0}
+@media(prefers-reduced-motion:no-preference){li.flash{animation:f 1.2s}@keyframes f{from{background:#dce8ff}}}
+</style>
+</head>
+<body>
+<header>
+  <div><h1>Users</h1><p class="sub">Cloud Computing · FastAPI + LangGraph on Vercel</p></div>
+  <div id="status">checking backend…</div>
+</header>
+<main>
+  <section>
+    <h2 id="formTitle">Add a user</h2>
+    <input type="hidden" id="uid">
+    <label for="name">Name</label><input id="name" maxlength="80">
+    <label for="email">Email</label><input id="email" type="email" maxlength="120">
+    <label for="bio">About</label><textarea id="bio" maxlength="500"></textarea>
+    <label>Picture (optional)</label>
+    <div class="pickpic"><div id="preview" class="avatar">?</div>
+      <div><input id="file" type="file" accept="image/*" style="padding:6px">
+      <button class="ghost" id="clearPic" type="button" style="margin-top:6px;padding:4px 10px">Remove picture</button></div></div>
+    <div class="row"><button id="save">Save user</button><button class="ghost" id="cancel" hidden>Cancel edit</button></div>
+    <p class="hint" id="formErr" style="color:var(--err)"></p>
+  </section>
+
+  <div class="right">
+    <section class="agent-box">
+      <h2>Ask the assistant</h2>
+      <textarea id="prompt" placeholder="e.g. Add Sara Khan, sara@mail.com, loves cycling&#10;or: change Sara's bio to 'runner' · show all users · delete sara@mail.com"></textarea>
+      <div class="row"><button id="ask">Run</button>
+        <input id="agentFile" type="file" accept="image/*" style="width:auto;padding:5px">
+      </div>
+      <p class="hint">Optional: attach a picture for create/update. A router LLM picks the operation, then a dedicated create / read / update / delete LLM validates it.</p>
+      <div id="reply"></div>
+    </section>
+    <section><h2>All users <span id="count" class="sub"></span></h2><ul id="list"></ul></section>
+  </div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let users = [], pic = null, agentPic = null;
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+async function api(path, opts = {}) {
+  const r = await fetch("/api" + path, { headers: { "Content-Type": "application/json" }, ...opts });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || r.statusText);
+  return j;
+}
+function shrink(file, size = 192) {           // resize to a small JPEG data-URL
+  return new Promise((res, rej) => {
+    const img = new Image(), fr = new FileReader();
+    fr.onload = () => { img.src = fr.result; };
+    img.onload = () => {
+      const s = Math.min(1, size / Math.min(img.width, img.height)), c = document.createElement("canvas");
+      c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height); res(c.toDataURL("image/jpeg", .8));
+    };
+    img.onerror = rej; fr.readAsDataURL(file);
+  });
+}
+function setPreview() {
+  $("preview").outerHTML = pic ? `<img id="preview" src="${pic}" alt="">` : `<div id="preview" class="avatar">${esc(($("name").value||"?")[0]).toUpperCase()}</div>`;
+}
+function render(flashId) {
+  $("count").textContent = users.length ? `(${users.length})` : "";
+  $("list").innerHTML = users.length ? users.map(u => `
+    <li class="${u.id === flashId ? "flash" : ""}">
+      ${u.pic ? `<img class="avatar" src="${u.pic}" alt="">` : `<div class="avatar">${esc(u.name[0]).toUpperCase()}</div>`}
+      <div class="info"><b>${esc(u.name)}</b><small>${esc(u.email)} · id ${u.id}</small><small>${esc(u.bio)}</small></div>
+      <button class="ghost" data-edit="${u.id}">Edit</button>
+      <button class="danger" data-del="${u.id}">Delete</button>
+    </li>`).join("") : `<div class="empty">No users yet. Add one on the left, or ask the assistant.</div>`;
+}
+async function load(flashId) { users = await api("/users"); render(flashId); }
+function resetForm() {
+  ["uid","name","email","bio"].forEach(i => $(i).value = ""); $("file").value = ""; pic = null; setPreview();
+  $("formTitle").textContent = "Add a user"; $("cancel").hidden = true; $("formErr").textContent = "";
+}
+$("file").onchange = async e => { if (e.target.files[0]) { pic = await shrink(e.target.files[0]); setPreview(); } };
+$("clearPic").onclick = () => { pic = null; $("file").value = ""; setPreview(); };
+$("name").oninput = () => { if (!pic) setPreview(); };
+$("cancel").onclick = resetForm;
+$("save").onclick = async () => {
+  $("formErr").textContent = "";
+  const body = { name: $("name").value.trim(), email: $("email").value.trim(), bio: $("bio").value.trim(), pic };
+  if (!body.name || !body.email) { $("formErr").textContent = "Name and email are required."; return; }
+  try {
+    const id = $("uid").value;
+    const u = id ? await api("/users/" + id, { method: "PUT", body: JSON.stringify(body) })
+                 : await api("/users", { method: "POST", body: JSON.stringify(body) });
+    resetForm(); await load(u.id);
+  } catch (e) { $("formErr").textContent = e.message; }
+};
+$("list").onclick = async e => {
+  const ed = e.target.dataset.edit, del = e.target.dataset.del;
+  if (ed) {
+    const u = users.find(x => x.id === ed);
+    $("uid").value = u.id; $("name").value = u.name; $("email").value = u.email; $("bio").value = u.bio; pic = u.pic || null;
+    setPreview(); $("formTitle").textContent = "Edit user"; $("cancel").hidden = false; scrollTo({ top: 0, behavior: "smooth" });
+  }
+  if (del && confirm("Delete this user?")) { await api("/users/" + del, { method: "DELETE" }); await load(); }
+};
+$("agentFile").onchange = async e => { agentPic = e.target.files[0] ? await shrink(e.target.files[0]) : null; };
+$("ask").onclick = async () => {
+  const prompt = $("prompt").value.trim(); if (!prompt) return;
+  $("ask").disabled = true; $("ask").textContent = "Thinking…";
+  const box = $("reply"); box.style.display = "block";
+  try {
+    const r = await api("/agent", { method: "POST", body: JSON.stringify({ prompt, pic: agentPic }) });
+    box.className = r.status;
+    const label = { ok: "Done", needs_more_info: "Need more info", error: "Not done" }[r.status];
+    box.innerHTML = `<span class="tag">${label}${r.op ? " · " + r.op : ""}</span>${esc(r.message)}`;
+    if (r.status === "ok") { $("prompt").value = ""; $("agentFile").value = ""; agentPic = null; }
+    await load(r.status === "ok" && r.data && r.data.id);
+    if (r.op === "read" && r.data) { users = [].concat(r.data); render(); }
+  } catch (e) { box.className = "error"; box.innerHTML = `<span class="tag">Error</span>${esc(e.message)}`; }
+  $("ask").disabled = false; $("ask").textContent = "Run";
+};
+api("/health").then(h => $("status").textContent = `storage: ${h.storage} · assistant: ${h.llm ? "on" : "no API key"}`)
+  .catch(() => $("status").textContent = "backend unreachable");
+load().catch(() => render());
+</script>
+</body>
+</html>
