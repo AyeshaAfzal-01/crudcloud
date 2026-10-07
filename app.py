@@ -173,8 +173,7 @@ class State(TypedDict, total=False):
 
 
 def llm():
-    # Groq free tier (no credit card): https://console.groq.com/keys
-    return ChatGroq(model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+    return ChatGroq(model=os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"),
                     temperature=0, max_tokens=500)
 
 
@@ -283,6 +282,8 @@ def agent(body: AgentIn):
     except Exception as exc:
         logger.exception("Assistant request failed")
         detail = str(exc).strip() or type(exc).__name__
+        if any(term in detail.lower() for term in ("rate_limit", "rate limit", "too many requests", "quota")):
+            detail = "Groq free-tier limit reached. Use the manual form or retry after the quota resets."
         raise HTTPException(502, f"Assistant request failed: {detail[:400]}") from exc
     return {k: out.get(k) for k in ("op", "status", "message", "data")}
 
