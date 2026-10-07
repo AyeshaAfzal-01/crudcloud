@@ -1,6 +1,7 @@
 """Cloud Computing course project: CRUD users + LangGraph tool-calling agent.
 FastAPI backend (Vercel zero-config) + static one-page UI in /public."""
 import json, os, time, uuid
+import logging
 from pathlib import Path
 from typing import Any, Literal, Optional, TypedDict
 
@@ -10,6 +11,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 app = FastAPI(title="Cloud CRUD")
+logger = logging.getLogger(__name__)
 
 # ───────────────────────── Storage (Upstash Redis on Vercel, memory locally) ──
 class Store:
@@ -276,7 +278,12 @@ def agent(body: AgentIn):
     if not os.getenv("GROQ_API_KEY"):
         raise HTTPException(503, "GROQ_API_KEY is not set on the server")
     _graph = _graph or build_graph()
-    out = _graph.invoke({"prompt": body.prompt, "pic": body.pic})
+    try:
+        out = _graph.invoke({"prompt": body.prompt, "pic": body.pic})
+    except Exception as exc:
+        logger.exception("Assistant request failed")
+        detail = str(exc).strip() or type(exc).__name__
+        raise HTTPException(502, f"Assistant request failed: {detail[:400]}") from exc
     return {k: out.get(k) for k in ("op", "status", "message", "data")}
 
 

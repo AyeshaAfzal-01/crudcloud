@@ -12,7 +12,7 @@ Vercel Hobby (hosting) · Groq free tier, Llama 3.3 70B (LLM) · Upstash Redis f
 ## Run locally
     python -m venv .venv && source .venv/bin/activate
     pip install -r requirements.txt
-    export GROQ_API_KEY=gsk_...   # free key from https://console.groq.com/keys
+    export GROQ_API_KEY=your_real_groq_api_key   # replace with a key from https://console.groq.com/keys
     uvicorn app:app --reload        # http://127.0.0.1:8000
 (No cloud DB keys locally → data lives in memory.)
 
@@ -20,7 +20,7 @@ Vercel Hobby (hosting) · Groq free tier, Llama 3.3 70B (LLM) · Upstash Redis f
 1. Push this folder to GitHub (or run `npm i -g vercel && vercel` inside it).
 2. Import the repo in Vercel – it auto-detects FastAPI (`app.py`) and serves `public/` as static.
 3. Project → Storage → Marketplace → add **Upstash Redis** (pick the Free plan). This injects `KV_REST_API_URL` and `KV_REST_API_TOKEN` (cloud storage).
-4. Project → Settings → Environment Variables → add `GROQ_API_KEY` (free, no card).
+4. Project → Settings → Environment Variables → add `GROQ_API_KEY` with your actual Groq key (not the placeholder shown in `.env.example`).
 5. Redeploy. Check `/api/health` – it should show `"storage":"upstash-redis"`.
 
 ## Try these prompts

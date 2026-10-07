@@ -28,11 +28,16 @@ button.danger{background:transparent;color:var(--err);border:1px solid var(--lin
 button:disabled{opacity:.5;cursor:wait}
 .row{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;align-items:center}
 .pickpic{display:flex;align-items:center;gap:10px}
+.pickpic>div:last-child{min-width:0;flex:1}
 .pickpic img,.avatar{width:56px;height:56px;border-radius:50%;object-fit:cover;background:#dfe6f1;flex:none}
 .avatar{display:grid;place-items:center;font-weight:800;color:var(--mute);font-size:20px}
+.avatar.placeholder{font-size:10px;font-weight:600}
 .right{display:flex;flex-direction:column;gap:20px;min-width:0}
 .agent-box{border-color:var(--accent);border-width:2px}
 .agent-box textarea{min-height:64px}
+.agent-attachment{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px}
+.agent-attachment label{margin:0}
+.agent-attachment input{width:auto;max-width:100%;padding:5px}
 #reply{margin-top:12px;padding:10px 12px;border-radius:6px;background:#f2f6fc;font-size:15px;display:none}
 #reply .tag{font-weight:600;margin-right:6px}
 #reply.ok .tag{color:var(--ok)}#reply.needs_more_info .tag{color:var(--warn)}#reply.error .tag{color:var(--err)}
@@ -57,10 +62,10 @@ li b{display:block}li small{color:var(--mute);display:block;overflow:hidden;text
     <label for="name">Name</label><input id="name" maxlength="80">
     <label for="email">Email</label><input id="email" type="email" maxlength="120">
     <label for="bio">About</label><textarea id="bio" maxlength="500"></textarea>
-    <label>Picture (optional)</label>
-    <div class="pickpic"><div id="preview" class="avatar">?</div>
+    <label for="file">Photo (optional)</label>
+    <div class="pickpic"><div id="preview" class="avatar placeholder">No photo</div>
       <div><input id="file" type="file" accept="image/*" style="padding:6px">
-      <button class="ghost" id="clearPic" type="button" style="margin-top:6px;padding:4px 10px">Remove picture</button></div></div>
+      <button class="ghost" id="clearPic" type="button" hidden style="margin-top:6px;padding:4px 10px">Remove photo</button></div></div>
     <div class="row"><button id="save">Save user</button><button class="ghost" id="cancel" hidden>Cancel edit</button></div>
     <p class="hint" id="formErr" style="color:var(--err)"></p>
   </section>
@@ -69,10 +74,11 @@ li b{display:block}li small{color:var(--mute);display:block;overflow:hidden;text
     <section class="agent-box">
       <h2>Ask the assistant</h2>
       <textarea id="prompt" placeholder="e.g. Add Sara Khan, sara@mail.com, loves cycling&#10;or: change Sara's bio to 'runner' · show all users · delete sara@mail.com"></textarea>
-      <div class="row"><button id="ask">Run</button>
-        <input id="agentFile" type="file" accept="image/*" style="width:auto;padding:5px">
+      <div class="row"><button id="ask">Run</button></div>
+      <div class="agent-attachment"><label for="agentFile">Photo (optional)</label>
+        <input id="agentFile" type="file" accept="image/*">
+        <button class="ghost" id="clearAgentPic" type="button" hidden>Remove photo</button>
       </div>
-      <p class="hint">Optional: attach a picture for create/update. A router LLM picks the operation, then a dedicated create / read / update / delete LLM validates it.</p>
       <div id="reply"></div>
     </section>
     <section><h2>All users <span id="count" class="sub"></span></h2><ul id="list"></ul></section>
@@ -102,7 +108,8 @@ function shrink(file, size = 192) {           // resize to a small JPEG data-URL
   });
 }
 function setPreview() {
-  $("preview").outerHTML = pic ? `<img id="preview" src="${pic}" alt="">` : `<div id="preview" class="avatar">${esc(($("name").value||"?")[0]).toUpperCase()}</div>`;
+  $("preview").outerHTML = pic ? `<img id="preview" src="${pic}" alt="">` : `<div id="preview" class="avatar placeholder">No photo</div>`;
+  $("clearPic").hidden = !pic;
 }
 function render(flashId) {
   $("count").textContent = users.length ? `(${users.length})` : "";
@@ -143,7 +150,13 @@ $("list").onclick = async e => {
   }
   if (del && confirm("Delete this user?")) { await api("/users/" + del, { method: "DELETE" }); await load(); }
 };
-$("agentFile").onchange = async e => { agentPic = e.target.files[0] ? await shrink(e.target.files[0]) : null; };
+$("agentFile").onchange = async e => {
+  agentPic = e.target.files[0] ? await shrink(e.target.files[0]) : null;
+  $("clearAgentPic").hidden = !agentPic;
+};
+$("clearAgentPic").onclick = () => {
+  agentPic = null; $("agentFile").value = ""; $("clearAgentPic").hidden = true;
+};
 $("ask").onclick = async () => {
   const prompt = $("prompt").value.trim(); if (!prompt) return;
   $("ask").disabled = true; $("ask").textContent = "Thinking…";
@@ -153,13 +166,16 @@ $("ask").onclick = async () => {
     box.className = r.status;
     const label = { ok: "Done", needs_more_info: "Need more info", error: "Not done" }[r.status];
     box.innerHTML = `<span class="tag">${label}${r.op ? " · " + r.op : ""}</span>${esc(r.message)}`;
-    if (r.status === "ok") { $("prompt").value = ""; $("agentFile").value = ""; agentPic = null; }
+    if (r.status === "ok") {
+      $("prompt").value = ""; $("agentFile").value = ""; agentPic = null;
+      $("clearAgentPic").hidden = true;
+    }
     await load(r.status === "ok" && r.data && r.data.id);
     if (r.op === "read" && r.data) { users = [].concat(r.data); render(); }
   } catch (e) { box.className = "error"; box.innerHTML = `<span class="tag">Error</span>${esc(e.message)}`; }
   $("ask").disabled = false; $("ask").textContent = "Run";
 };
-api("/health").then(h => $("status").textContent = `storage: ${h.storage} · assistant: ${h.llm ? "on" : "no API key"}`)
+api("/health").then(h => $("status").textContent = `storage: ${h.storage} · assistant key: ${h.llm ? "set" : "missing"}`)
   .catch(() => $("status").textContent = "backend unreachable");
 load().catch(() => render());
 </script>
