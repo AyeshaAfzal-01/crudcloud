@@ -40,6 +40,7 @@ button:disabled{opacity:.5;cursor:wait}
 .agent-attachment input{width:auto;max-width:100%;padding:5px}
 #reply{margin-top:12px;padding:10px 12px;border-radius:6px;background:#f2f6fc;font-size:15px;display:none}
 #reply .tag{font-weight:600;margin-right:6px}
+#reply .reply-actions{display:flex;gap:8px;margin-top:10px}
 #reply.ok .tag{color:var(--ok)}#reply.needs_more_info .tag{color:var(--warn)}#reply.error .tag{color:var(--err)}
 .hint{font-size:13px;color:var(--mute);margin:6px 0 0}
 ul{list-style:none;margin:0;padding:0;display:grid;gap:10px}
@@ -86,7 +87,7 @@ li b{display:block}li small{color:var(--mute);display:block;overflow:hidden;text
 </main>
 <script>
 const $ = id => document.getElementById(id);
-let users = [], pic = null, agentPic = null;
+let users = [], pic = null, agentPic = null, pendingDelete = null;
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 async function api(path, opts = {}) {
@@ -157,15 +158,45 @@ $("agentFile").onchange = async e => {
 $("clearAgentPic").onclick = () => {
   agentPic = null; $("agentFile").value = ""; $("clearAgentPic").hidden = true;
 };
+$("reply").onclick = async e => {
+  const box = $("reply");
+  if (e.target.closest("[data-cancel-delete]")) {
+    pendingDelete = null;
+    box.className = "";
+    box.innerHTML = `<span class="tag">Cancelled</span>User was not deleted.`;
+    return;
+  }
+  const confirmButton = e.target.closest("[data-confirm-delete]");
+  if (!confirmButton || !pendingDelete) return;
+  const { id, name } = pendingDelete;
+  confirmButton.disabled = true;
+  try {
+    await api("/users/" + encodeURIComponent(id), { method: "DELETE" });
+    pendingDelete = null;
+    box.className = "ok";
+    box.innerHTML = `<span class="tag">Done</span>${esc(`Deleted ${name}.`)}`;
+    await load();
+  } catch (err) {
+    confirmButton.disabled = false;
+    box.className = "error";
+    box.innerHTML = `<span class="tag">Error</span>${esc(err.message)}`;
+  }
+};
 $("ask").onclick = async () => {
   const prompt = $("prompt").value.trim(); if (!prompt) return;
+  pendingDelete = null;
   $("ask").disabled = true; $("ask").textContent = "Thinking…";
   const box = $("reply"); box.style.display = "block";
   try {
     const r = await api("/agent", { method: "POST", body: JSON.stringify({ prompt, pic: agentPic }) });
     box.className = r.status;
-    const label = { ok: "Done", needs_more_info: "Need more info", error: "Not done" }[r.status];
-    box.innerHTML = `<span class="tag">${label}${r.op ? " · " + r.op : ""}</span>${esc(r.message)}`;
+    const label = { ok: "Done", needs_more_info: "Need more info", needs_confirmation: "Confirm action", error: "Not done" }[r.status];
+    const needsDeleteConfirmation = r.status === "needs_confirmation" && r.op === "delete" && r.data?.id;
+    pendingDelete = needsDeleteConfirmation ? { id: r.data.id, name: r.data.name } : null;
+    const actions = needsDeleteConfirmation
+      ? `<div class="reply-actions"><button class="danger" type="button" data-confirm-delete="${esc(r.data.id)}">Yes, delete</button><button class="ghost" type="button" data-cancel-delete>Cancel</button></div>`
+      : "";
+    box.innerHTML = `<span class="tag">${label}${r.op ? " · " + r.op : ""}</span>${esc(r.message)}${actions}`;
     if (r.status === "ok") {
       $("prompt").value = ""; $("agentFile").value = ""; agentPic = null;
       $("clearAgentPic").hidden = true;
@@ -175,7 +206,7 @@ $("ask").onclick = async () => {
   } catch (e) { box.className = "error"; box.innerHTML = `<span class="tag">Error</span>${esc(e.message)}`; }
   $("ask").disabled = false; $("ask").textContent = "Run";
 };
-api("/health").then(h => $("status").textContent = `storage: ${h.storage} · assistant key: ${h.llm ? "set" : "missing"}`)
+api("/health").then(h => $("status").textContent = `storage: ${h.storage} · assistant key: ${h.llm ? "set" : "missing"} · model: ${h.model}`)
   .catch(() => $("status").textContent = "backend unreachable");
 load().catch(() => render());
 </script>

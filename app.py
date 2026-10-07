@@ -2,6 +2,7 @@
 FastAPI backend (Vercel zero-config) + static one-page UI in /public."""
 import json, os, time, uuid
 import logging
+import re
 from pathlib import Path
 from typing import Any, Literal, Optional, TypedDict
 
@@ -79,7 +80,8 @@ def new_user(d: UserIn) -> dict:
 @app.get("/api/health")
 def health():
     return {"ok": True, "storage": "upstash-redis" if store.cloud else "memory",
-            "llm": bool(os.getenv("GROQ_API_KEY"))}
+            "llm": bool(os.getenv("GROQ_API_KEY")),
+            "model": os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")}
 
 
 @app.get("/api/users")
@@ -178,7 +180,9 @@ def llm():
 
 
 def ask(schema, system: str, prompt: str):
-    return llm().with_structured_output(schema).invoke([("system", system), ("human", prompt)])
+    return llm().with_structured_output(schema, method="json_schema").invoke(
+        [("system", system), ("human", prompt)]
+    )
 
 
 def need(msg: str) -> dict:
@@ -186,8 +190,18 @@ def need(msg: str) -> dict:
 
 
 def router(s: State) -> State:
+    prompt = s["prompt"]
+    photo_removal = re.search(
+        r"\b(?:delete|remove|clear)\b.{0,40}\b(?:photo|picture|image|avatar)\b|"
+        r"\b(?:photo|picture|image|avatar)\b.{0,40}\b(?:delete|remove|clear)\b",
+        prompt,
+        re.IGNORECASE,
+    )
+    if photo_removal:
+        return {"op": "update"}
     r = ask(Route, "You route requests for a user-management app. Choose create, read (view/list/show/find), "
-                   "update (edit/change/rename), delete (remove), or unknown if it is none of these.", s["prompt"])
+                   "update (edit/change/rename or remove a user's photo), delete (remove a user), "
+                   "or unknown if it is none of these. Removing a photo is always an update, never a user deletion.", prompt)
     if r.operation == "unknown":
         return {"op": "unknown", **need("I can create, view, update or delete users. Try: "
                                          "'add Sara, sara@mail.com, loves cycling'.")}
@@ -196,9 +210,12 @@ def router(s: State) -> State:
 
 def create_node(s: State) -> State:
     a = ask(CreateArgs, "You are the CREATE agent. Extract the new user's name, email and bio.", s["prompt"])
-    missing = [f for f in ("name", "email") if not getattr(a, f)]
-    if missing:
-        return need(f"Can't create the user yet. Missing: {', '.join(missing)}.")
+    if not a.name and not a.email:
+        return need("Please provide the user's name and email address.")
+    if not a.name:
+        return need("Please provide the user's name.")
+    if not a.email:
+        return need(f"What email address should I use for {a.name}?")
     if a.mentions_picture and not s.get("pic"):
         return need("You mentioned a picture, but none is attached. Attach one, or say to skip it (it's optional).")
     if store.find(a.email):
@@ -220,7 +237,8 @@ def read_node(s: State) -> State:
 
 
 def update_node(s: State) -> State:
-    a = ask(UpdateArgs, "You are the UPDATE agent. Extract which user to change (id, email or name) and the new values.", s["prompt"])
+    a = ask(UpdateArgs, "You are the UPDATE agent. Extract which user to change (id, email or name) and the new values. "
+                       "If the user asks to delete, remove or clear a picture/photo/avatar, set remove_picture=true; do not delete the user.", s["prompt"])
     if not a.key:
         return need("Which user should I update? Give an id, email or name.")
     u = store.find(a.key)
@@ -247,8 +265,11 @@ def delete_node(s: State) -> State:
     u = store.find(a.key)
     if not u:
         return {"status": "error", "message": f"No user matches '{a.key}'."}
-    store.delete(u["id"])
-    return {"status": "ok", "message": f"Deleted {u['name']}.", "data": u}
+    return {
+        "status": "needs_confirmation",
+        "message": f"Delete {u['name']} ({u['email']})? This cannot be undone.",
+        "data": {"id": u["id"], "name": u["name"], "email": u["email"]},
+    }
 
 
 def build_graph():
